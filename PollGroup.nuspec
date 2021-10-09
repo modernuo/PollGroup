@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>PollGroup</id>
+    <version>1.0.0</version>
+    <authors>Kamron Batman</authors>
+    <owners>Kamron Batman</owners>
+    <license type="expression">MIT</license>
+    <projectUrl>https://github.com/modernuo/PollGroup</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>PollGroup 1.0.0 - epoll/wepoll/kqueue for .NET 5</description>
+    <copyright>Copyright 2021</copyright>
+  </metadata>
+</package>
