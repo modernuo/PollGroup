@@ -11,8 +11,8 @@
         <LangVersion>Preview</LangVersion>
         <Platforms>x64</Platforms>
         <PlatformTarget>x64</PlatformTarget>
-        <AssemblyVersion>1.2.0</AssemblyVersion>
-        <PackageVersion>1.2.0</PackageVersion>
+        <AssemblyVersion>1.2.1</AssemblyVersion>
+        <PackageVersion>1.2.1</PackageVersion>
         <RootNamespace>System.Network</RootNamespace>
         <AssemblyName>PollGroup</AssemblyName>
         <IsPackable>true</IsPackable>
@@ -24,6 +24,8 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <Description>epoll/wepoll/kqueue for .NET 6</Description>
+        <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
     </PropertyGroup>
 
     <ItemGroup>
