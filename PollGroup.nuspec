@@ -1,14 +1,21 @@
 <?xml version="1.0"?>
 <package>
-  <metadata>
-    <id>PollGroup</id>
-    <version>1.1.0</version>
-    <authors>Kamron Batman</authors>
-    <owners>Kamron Batman</owners>
-    <license type="file">LICENSE</license>
-    <projectUrl>https://github.com/modernuo/PollGroup</projectUrl>
-    <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>PollGroup 1.1.0 - epoll/wepoll/kqueue for .NET 5/.NET 6</description>
-    <copyright>Copyright 2021</copyright>
-  </metadata>
+    <metadata>
+        <id>PollGroup</id>
+        <version>1.2.0</version>
+        <authors>Kamron Batman</authors>
+        <owners>Kamron Batman</owners>
+        <license type="file">LICENSE</license>
+        <projectUrl>https://github.com/modernuo/PollGroup</projectUrl>
+        <requireLicenseAcceptance>false</requireLicenseAcceptance>
+        <description>PollGroup 1.2.0 - epoll/wepoll/kqueue for .NET 6</description>
+        <copyright>Copyright 2022</copyright>
+    </metadata>
+    <files>
+        <file src="bin\Debug\net6.0\PollGroup.dll" target="lib\debug\PollGroup.dll" />
+        <file src="bin\Debug\net6.0\PollGroup.pdb" target="lib\debug\PollGroup.pdb" />
+        <file src="bin\Release\net6.0\PollGroup.dll" target="lib\release\PollGroup.dll" />
+        <file src="bin\Release\net6.0\PollGroup.pdb" target="lib\release\PollGroup.pdb" />
+        <file src="package\PollGroup.targets" target="build\PollGroup.targets" />
+    </files>
 </package>
