@@ -159,58 +159,7 @@ public sealed class EPollGroup : IPollGroup
             Windows.epoll_wait(_epHndle, _events, maxEvents, 0) :
             Linux.epoll_wait(_epHndle, _events, maxEvents, 0);
     }
-    
-    public int Poll(int[] fds)
-    {
-        var rc = Poll(fds.Length);
-        
-        if (rc <= 0)
-        {
-            return rc;
-        }
 
-        for (var i = 0; i < rc; i++)
-        {
-            fds[i] = _events[i].data.fd;
-        }
-
-        return rc;
-    }
-    
-    public int Poll(uint[] u32s)
-    {
-        var rc = Poll(u32s.Length);
-
-        if (rc <= 0)
-        {
-            return rc;
-        }
-
-        for (var i = 0; i < rc; i++)
-        {
-            u32s[i] = _events[i].data.u32;
-        }
-
-        return rc;
-    }
-    
-    public int Poll(ulong[] u64s)
-    {
-        var rc = Poll(u64s.Length);
-        
-        if (rc <= 0)
-        {
-            return rc;
-        }
-
-        for (var i = 0; i < rc; i++)
-        {
-            u64s[i] = _events[i].data.u64;
-        }
-
-        return rc;
-    }
-    
     public int Poll(GCHandle[] handles)
     {
         var rc = Poll(handles.Length);

@@ -8,9 +8,6 @@ public interface IPollGroup : IDisposable
     void Add(Socket sock, GCHandle handle);
     void Remove(Socket sock, GCHandle handle);
     int Poll(int maxEvents);
-    int Poll(int[] fds);
-    int Poll(uint[] u32s);
-    int Poll(ulong[] u64s);
     int Poll(IntPtr[] ptrs);
     int Poll(GCHandle[] handles);
 }

@@ -1,5 +1,3 @@
-using System;
-using System.IO;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
@@ -183,13 +181,14 @@ public class KQueuePollGroup : IPollGroup
         }
     }
 
-    public void Remove(Socket socket)
+    public void Remove(Socket socket, GCHandle handle)
     {
         var rc = BSD.kevent(
             _kqueueHndle,
             socket.Handle,
             kqueue_filter.READ | kqueue_filter.WRITE,
-            kqueue_flags.DELETE
+            kqueue_flags.DELETE,
+            udata: (IntPtr)handle
         );
 
         if (rc != 0)
@@ -200,22 +199,44 @@ public class KQueuePollGroup : IPollGroup
 
     private kevent[] _events = new kevent[2048];
 
-    public int Poll(ref GCHandle[] handles)
+    public int Poll(int maxEvents)
     {
-        if (handles.Length > _events.Length)
+        if (maxEvents > _events.Length)
         {
-            var newLength = Math.Max(handles.Length, _events.Length + (_events.Length >> 2));
+            var newLength = Math.Max(maxEvents, _events.Length + (_events.Length >> 2));
             _events = new kevent[newLength];
         }
 
-        var rc = BSD.kevent(_kqueueHndle, null, 0, _events, _events.Length, _zeroTimeoutPtr);
+        return BSD.kevent(_kqueueHndle, null, 0, _events, _events.Length, _zeroTimeoutPtr);
+    }
 
+    public int Poll(IntPtr[] ptrs)
+    {
+        var rc = Poll(ptrs.Length);
+        
         if (rc <= 0)
         {
             return rc;
         }
 
-        for (int i = 0; i < rc; i++)
+        for (var i = 0; i < rc; i++)
+        {
+            ptrs[i] = _events[i].udata;
+        }
+
+        return rc;
+    }
+    
+    public int Poll(GCHandle[] handles)
+    {
+        var rc = Poll(handles.Length);
+        
+        if (rc <= 0)
+        {
+            return rc;
+        }
+
+        for (var i = 0; i < rc; i++)
         {
             handles[i] = (GCHandle)_events[i].udata;
         }
