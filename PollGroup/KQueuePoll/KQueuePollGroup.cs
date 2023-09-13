@@ -111,8 +111,8 @@ public sealed partial class KQueuePollGroup : IPollGroup
         [LibraryImport("libc", SetLastError = true)]
         public static partial int kqueue();
 
-        [DllImport("libc", SetLastError = true)]
-        public static extern int kevent(int kq, kevent[]? changelist, int nchanges, [In, Out] kevent[]? eventlist, int nevents, nint timeout);
+        [LibraryImport("libc", SetLastError = true)]
+        public static partial int kevent(int kq, kevent[]? changelist, int nchanges, kevent[]? eventlist, int nevents, nint timeout);
 
         public static int kevent(
             int kq,
