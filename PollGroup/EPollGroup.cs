@@ -219,7 +219,7 @@ public sealed class EPollGroup : IPollGroup
             return Linux_aarch64.epoll_wait(_epHndle, _events, maxEvents, 0);
         }
 
-        if (maxEvents > _events.Length)
+        if (maxEvents > _eventsPacked.Length)
         {
             var newLength = Math.Max(maxEvents, _eventsPacked.Length + (_eventsPacked.Length >> 2));
             _eventsPacked = new epoll_event_packed[newLength];
