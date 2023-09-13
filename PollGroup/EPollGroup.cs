@@ -169,7 +169,7 @@ public sealed class EPollGroup : IPollGroup
             };
             ev.data.ptr = (IntPtr)handle;
 
-            rc = Linux_aarch64.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_ADD, (int)socket.Handle, ref ev);
+            rc = Linux_aarch64.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_DEL, (int)socket.Handle, ref ev);
         }
         else
         {
