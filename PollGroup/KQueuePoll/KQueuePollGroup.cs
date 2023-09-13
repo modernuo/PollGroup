@@ -1,19 +1,21 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
-namespace System.Network;
+namespace System.Network.KQueuePoll;
 
-public class KQueuePollGroup : IPollGroup
+#pragma warning disable IDE1006 // Naming Styles
+
+public sealed partial class KQueuePollGroup : IPollGroup
 {
     [StructLayout(LayoutKind.Sequential)]
     private struct kevent
     {
-        public IntPtr ident;
+        public nint ident;
         public kqueue_filter filter;
         public kqueue_flags flags;
         public kqueue_fflags fflags;
-        public IntPtr data;
-        public IntPtr udata;
+        public nint data;
+        public nint udata;
     }
 
     [Flags]
@@ -46,7 +48,7 @@ public class KQueuePollGroup : IPollGroup
         RECEIPT = 0x0040,
         DISPATCH = 0x0080,
         UDATA_SPECIFIC = 0x0100,
-        DISPATCH2 = (DISPATCH | UDATA_SPECIFIC),
+        DISPATCH2 = DISPATCH | UDATA_SPECIFIC,
         VANISHED = 0x0200,
         SYSFLAGS = 0xF000,
         FLAG0 = 0x1000,
@@ -90,7 +92,7 @@ public class KQueuePollGroup : IPollGroup
     }
 
     private static readonly kevent[] _singleEvent = new kevent[1];
-    private static readonly IntPtr _zeroTimeoutPtr;
+    private static readonly nint _zeroTimeoutPtr;
     // ReSharper disable once PrivateFieldCanBeConvertedToLocalVariable
     private static readonly timespec _zeroTimeout;
 
@@ -101,25 +103,25 @@ public class KQueuePollGroup : IPollGroup
         Marshal.StructureToPtr(_zeroTimeout, _zeroTimeoutPtr, false);
     }
 
-    private static class BSD
+    private static partial class BSD
     {
-        [DllImport ("libc", SetLastError = true)]
-        public static extern int close (int fd);
+        [LibraryImport("libc", SetLastError = true)]
+        public static partial int close(int fd);
+
+        [LibraryImport("libc", SetLastError = true)]
+        public static partial int kqueue();
 
         [DllImport("libc", SetLastError = true)]
-        public static extern int kqueue();
-
-        [DllImport("libc", SetLastError = true)]
-        public static extern int kevent(int kq, kevent[]? changelist, int nchanges, [In, Out] kevent[]? eventlist, int nevents, IntPtr timeout);
+        public static extern int kevent(int kq, kevent[]? changelist, int nchanges, [In, Out] kevent[]? eventlist, int nevents, nint timeout);
 
         public static int kevent(
             int kq,
-            IntPtr ident,
+            nint ident,
             kqueue_filter filter,
             kqueue_flags flags,
             kqueue_fflags fflags = 0,
-            IntPtr data = default,
-            IntPtr udata = default
+            nint data = default,
+            nint udata = default
         )
         {
             _singleEvent[0] = new kevent
@@ -148,6 +150,7 @@ public class KQueuePollGroup : IPollGroup
     }
 
     private readonly int _kqueueHndle;
+    private kevent[] _events = new kevent[2048];
 
     public KQueuePollGroup()
     {
@@ -172,7 +175,7 @@ public class KQueuePollGroup : IPollGroup
             socket.Handle,
             kqueue_filter.READ | kqueue_filter.WRITE,
             kqueue_flags.ADD | kqueue_flags.CLEAR,
-            udata: (IntPtr)handle
+            udata: (nint)handle
         );
 
         if (rc != 0)
@@ -188,7 +191,7 @@ public class KQueuePollGroup : IPollGroup
             socket.Handle,
             kqueue_filter.READ | kqueue_filter.WRITE,
             kqueue_flags.DELETE,
-            udata: (IntPtr)handle
+            udata: (nint)handle
         );
 
         if (rc != 0)
@@ -196,8 +199,6 @@ public class KQueuePollGroup : IPollGroup
             throw new Exception($"kevent failed with error code {Marshal.GetLastWin32Error()}");
         }
     }
-
-    private kevent[] _events = new kevent[2048];
 
     public int Poll(int maxEvents)
     {
@@ -210,10 +211,10 @@ public class KQueuePollGroup : IPollGroup
         return BSD.kevent(_kqueueHndle, null, 0, _events, _events.Length, _zeroTimeoutPtr);
     }
 
-    public int Poll(IntPtr[] ptrs)
+    public int Poll(nint[] ptrs)
     {
         var rc = Poll(ptrs.Length);
-        
+
         if (rc <= 0)
         {
             return rc;
@@ -226,11 +227,11 @@ public class KQueuePollGroup : IPollGroup
 
         return rc;
     }
-    
+
     public int Poll(GCHandle[] handles)
     {
         var rc = Poll(handles.Length);
-        
+
         if (rc <= 0)
         {
             return rc;
@@ -244,3 +245,5 @@ public class KQueuePollGroup : IPollGroup
         return rc;
     }
 }
+
+#pragma warning restore IDE1006 // Naming Styles

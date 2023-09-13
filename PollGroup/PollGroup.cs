@@ -1,16 +1,9 @@
-using System.Net.Sockets;
+using System.Network.EPoll;
+using System.Network.EPoll.Architectures;
+using System.Network.KQueuePoll;
 using System.Runtime.InteropServices;
 
 namespace System.Network;
-
-public interface IPollGroup : IDisposable
-{
-    void Add(Socket sock, GCHandle handle);
-    void Remove(Socket sock, GCHandle handle);
-    int Poll(int maxEvents);
-    int Poll(IntPtr[] ptrs);
-    int Poll(GCHandle[] handles);
-}
 
 public static class PollGroup
 {
@@ -21,6 +14,16 @@ public static class PollGroup
             return new KQueuePollGroup();
         }
 
-        return new EPollGroup();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return new PackedEPollGroup<Win_x64>();
+        }
+
+        if (RuntimeInformation.ProcessArchitecture is Architecture.Arm or Architecture.Arm64 or Architecture.Armv6)
+        {
+            return new EPollGroup<Linux_arm64>();
+        }
+
+        return new PackedEPollGroup<Linux_x64>();
     }
 }

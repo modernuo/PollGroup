@@ -2,8 +2,11 @@ using System.Runtime.InteropServices;
 
 namespace System.Network;
 
+#pragma warning disable IDE1006 // Naming Styles
+
 [Flags]
-public enum epoll_flags
+internal enum epoll_flags
+
 {
     NONE = 0,
     CLOEXEC = 0x02000000,
@@ -11,7 +14,7 @@ public enum epoll_flags
 }
 
 [Flags]
-public enum epoll_events : uint
+internal enum epoll_events : uint
 {
     EPOLLIN = 0x001,
     EPOLLPRI = 0x002,
@@ -28,7 +31,7 @@ public enum epoll_events : uint
     EPOLLET = unchecked((uint)(1 << 31))
 }
 
-public enum epoll_op
+internal enum epoll_op
 {
     EPOLL_CTL_ADD = 1,
     EPOLL_CTL_DEL = 2,
@@ -36,7 +39,7 @@ public enum epoll_op
 }
 
 [StructLayout(LayoutKind.Explicit, Size = 8)]
-public struct epoll_data
+internal struct epoll_data
 {
     [FieldOffset(0)]
     public int fd;
@@ -49,7 +52,7 @@ public struct epoll_data
 }
 
 [StructLayout(LayoutKind.Explicit, Pack = 4)]
-public struct epoll_event_packed
+internal struct epoll_event_packed
 {
     [FieldOffset(0)]
     public epoll_events events;
@@ -57,8 +60,10 @@ public struct epoll_event_packed
     public epoll_data data;
 }
 
-public struct epoll_event
+internal struct epoll_event
 {
     public epoll_events events;
     public epoll_data data;
 }
+
+#pragma warning restore IDE1006 // Naming Styles
