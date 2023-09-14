@@ -8,8 +8,8 @@
         <WarningLevel>5</WarningLevel>
         <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
         <LangVersion>Preview</LangVersion>
-        <AssemblyVersion>1.4.2</AssemblyVersion>
-        <PackageVersion>1.4.2</PackageVersion>
+        <AssemblyVersion>1.4.3</AssemblyVersion>
+        <PackageVersion>1.4.3</PackageVersion>
         <RootNamespace>System.Network</RootNamespace>
         <AssemblyName>PollGroup</AssemblyName>
         <IsPackable>true</IsPackable>
