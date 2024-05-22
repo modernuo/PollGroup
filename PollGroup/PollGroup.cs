@@ -16,14 +16,14 @@ public static class PollGroup
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return new PackedEPollGroup<Win_x64>();
+            return new EPollGroup<Win_x64, epoll_event_packed>();
         }
 
         if (RuntimeInformation.ProcessArchitecture is Architecture.Arm or Architecture.Arm64 or Architecture.Armv6)
         {
-            return new EPollGroup<Linux_arm64>();
+            return new EPollGroup<Linux_arm64, epoll_event>();
         }
 
-        return new PackedEPollGroup<Linux_x64>();
+        return new EPollGroup<Linux_x64, epoll_event_packed>();
     }
 }

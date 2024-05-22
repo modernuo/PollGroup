@@ -1,3 +1,4 @@
+using System.Network.EPoll;
 using System.Runtime.InteropServices;
 
 namespace System.Network;
@@ -52,18 +53,24 @@ internal struct epoll_data
 }
 
 [StructLayout(LayoutKind.Explicit, Pack = 4)]
-internal struct epoll_event_packed
+internal struct epoll_event_packed : IEpollEvent
 {
     [FieldOffset(0)]
     public epoll_events events;
     [FieldOffset(4)]
     public epoll_data data;
+
+    public epoll_events Events { readonly get => events; init => events = value; }
+    public nint Ptr { readonly get => data.ptr; init => data.ptr = value; }
 }
 
-internal struct epoll_event
+internal struct epoll_event : IEpollEvent
 {
     public epoll_events events;
     public epoll_data data;
+
+    public epoll_events Events { readonly get => events; init => events = value; }
+    public nint Ptr { readonly get => data.ptr; init => data.ptr = value; }
 }
 
 #pragma warning restore IDE1006 // Naming Styles

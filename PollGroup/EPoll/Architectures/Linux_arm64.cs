@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace System.Network.EPoll.Architectures;
 
-internal sealed partial class Linux_arm64 : IArch
+internal sealed partial class Linux_arm64 : IArch<epoll_event>
 {
     [LibraryImport("libc", SetLastError = true)]
     public static partial int epoll_create1(epoll_flags flags);
