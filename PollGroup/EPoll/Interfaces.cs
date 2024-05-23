@@ -4,20 +4,18 @@ namespace System.Network.EPoll;
 
 #pragma warning disable IDE1006 // Naming Styles
 
-internal interface IArch
+internal interface IArch<TEvent> where TEvent : struct, IEpollEvent
 {
     public abstract static int epoll_create1(epoll_flags flags);
     public abstract static int epoll_close(int epfd);
-    public abstract static int epoll_ctl(int epfd, epoll_op op, int fd, ref epoll_event ee);
-    public abstract static int epoll_wait(int epfd, [In, Out] epoll_event[] ee, int maxevents, int timeout);
+    public abstract static int epoll_ctl(int epfd, epoll_op op, int fd, ref TEvent ee);
+    public abstract static int epoll_wait(int epfd, [In, Out] TEvent[] ee, int maxevents, int timeout);
 }
 
-internal interface IPackedArch
+internal interface IEpollEvent
 {
-    public abstract static int epoll_create1(epoll_flags flags);
-    public abstract static int epoll_close(int epfd);
-    public abstract static int epoll_ctl(int epfd, epoll_op op, int fd, ref epoll_event_packed ee);
-    public abstract static int epoll_wait(int epfd, [In, Out] epoll_event_packed[] ee, int maxevents, int timeout);
+    public epoll_events Events { get; init; }
+    public nint Ptr { get; init; }
 }
 
 #pragma warning restore IDE1006 // Naming Styles

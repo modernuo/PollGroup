@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace System.Network.EPoll.Architectures;
 
-internal sealed partial class Win_x64 : IPackedArch
+internal sealed partial class Win_x64 : IArch<epoll_event_packed>
 {
     [LibraryImport("wepoll.dll", SetLastError = true)]
     public static partial int epoll_create1(epoll_flags flags);
