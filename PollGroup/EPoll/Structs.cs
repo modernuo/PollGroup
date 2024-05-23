@@ -7,7 +7,6 @@ namespace System.Network;
 
 [Flags]
 internal enum epoll_flags
-
 {
     NONE = 0,
     CLOEXEC = 0x02000000,
