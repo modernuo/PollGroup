@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
-namespace System.Network.KQueuePoll;
+namespace System.Network.KQueue;
 
 #pragma warning disable IDE1006 // Naming Styles
 

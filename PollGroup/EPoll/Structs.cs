@@ -55,21 +55,40 @@ internal struct epoll_data
 internal struct epoll_event_packed : IEpollEvent
 {
     [FieldOffset(0)]
-    public epoll_events events;
+    private epoll_events _events;
     [FieldOffset(4)]
-    public epoll_data data;
+    private epoll_data _data;
 
-    public epoll_events Events { readonly get => events; init => events = value; }
-    public nint Ptr { readonly get => data.ptr; init => data.ptr = value; }
+    public epoll_events Events
+    {
+        get => _events;
+        set => _events = value;
+    }
+
+    public IntPtr Ptr
+    {
+        get => _data.ptr;
+        set => _data.ptr = value;
+    }
 }
 
+[StructLayout(LayoutKind.Sequential)]
 internal struct epoll_event : IEpollEvent
 {
-    public epoll_events events;
-    public epoll_data data;
+    private epoll_events _events;
+    private epoll_data _data;
 
-    public epoll_events Events { readonly get => events; init => events = value; }
-    public nint Ptr { readonly get => data.ptr; init => data.ptr = value; }
+    public epoll_events Events
+    {
+        get => _events;
+        set => _events = value;
+    }
+
+    public IntPtr Ptr
+    {
+        get => _data.ptr;
+        set => _data.ptr = value;
+    }
 }
 
 #pragma warning restore IDE1006 // Naming Styles

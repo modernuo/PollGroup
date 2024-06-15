@@ -1,6 +1,6 @@
 using System.Network.EPoll;
 using System.Network.EPoll.Architectures;
-using System.Network.KQueuePoll;
+using System.Network.KQueue;
 using System.Runtime.InteropServices;
 
 namespace System.Network;
