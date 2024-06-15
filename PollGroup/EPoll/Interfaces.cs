@@ -14,8 +14,8 @@ internal interface IArch<TEvent> where TEvent : struct, IEpollEvent
 
 internal interface IEpollEvent
 {
-    public epoll_events Events { get; init; }
-    public nint Ptr { get; init; }
+    public epoll_events Events { get; set; }
+    public nint Ptr { get; set; }
 }
 
 #pragma warning restore IDE1006 // Naming Styles

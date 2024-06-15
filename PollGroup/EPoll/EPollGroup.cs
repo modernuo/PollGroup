@@ -32,11 +32,6 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_ADD, (int)socket.Handle, ref ev);
     }
 
-    public void Dispose()
-    {
-        TArch.epoll_close(_epHndle);
-    }
-
     public int Poll(int maxEvents)
     {
         if (maxEvents > _events.Length)
@@ -96,5 +91,10 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         {
             throw new Exception($"epoll_ctl failed with error code {Marshal.GetLastWin32Error()}");
         }
+    }
+
+    public void Dispose()
+    {
+        TArch.epoll_close(_epHndle);
     }
 }
