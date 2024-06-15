@@ -26,7 +26,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         var ev = new TEvent
         {
             Events = epoll_events.EPOLLIN | epoll_events.EPOLLERR,
-            Ptr = (IntPtr)handle
+            Ptr = (nint)handle
         };
 
         TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_ADD, (int)socket.Handle, ref ev);
@@ -43,7 +43,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         return TArch.epoll_wait(_epHndle, _events, maxEvents, 0);
     }
 
-    public int Poll(IntPtr[] ptrs)
+    public int Poll(nint[] ptrs)
     {
         var rc = Poll(ptrs.Length);
 
@@ -82,7 +82,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         var ev = new TEvent
         {
             Events = epoll_events.EPOLLIN | epoll_events.EPOLLERR,
-            Ptr = (IntPtr)handle
+            Ptr = (nint)handle
         };
 
         int rc = TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_DEL, (int)socket.Handle, ref ev);

@@ -44,7 +44,7 @@ internal struct epoll_data
     [FieldOffset(0)]
     public int fd;
     [FieldOffset(0)]
-    public IntPtr ptr;
+    public nint ptr;
     [FieldOffset(0)]
     public uint u32;
     [FieldOffset(0)]
@@ -65,7 +65,7 @@ internal struct epoll_event_packed : IEpollEvent
         set => _events = value;
     }
 
-    public IntPtr Ptr
+    public nint Ptr
     {
         get => _data.ptr;
         set => _data.ptr = value;
@@ -84,7 +84,7 @@ internal struct epoll_event : IEpollEvent
         set => _events = value;
     }
 
-    public IntPtr Ptr
+    public nint Ptr
     {
         get => _data.ptr;
         set => _data.ptr = value;
