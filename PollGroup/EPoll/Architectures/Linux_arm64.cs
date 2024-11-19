@@ -11,7 +11,7 @@ internal sealed partial class Linux_arm64 : IArch<epoll_event>
     public static partial int epoll_close(int epfd);
 
     [LibraryImport("libc", SetLastError = true)]
-    public static partial int epoll_ctl(int epfd, epoll_op op, int fd, ref epoll_event ee);
+    public static partial int epoll_ctl(int epfd, epoll_op op, nint fd, ref epoll_event ee);
 
     [LibraryImport("libc", SetLastError = true)]
     public static partial int epoll_wait(int epfd, epoll_event[] ee, int maxevents, int timeout);

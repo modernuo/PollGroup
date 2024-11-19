@@ -1,15 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <Authors>Kamron Batman</Authors>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
         <WarningLevel>5</WarningLevel>
         <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
         <LangVersion>Preview</LangVersion>
-        <AssemblyVersion>1.5.1</AssemblyVersion>
-        <PackageVersion>1.5.1</PackageVersion>
+        <AssemblyVersion>1.6.0</AssemblyVersion>
+        <PackageVersion>1.6.0</PackageVersion>
         <RootNamespace>System.Network</RootNamespace>
         <AssemblyName>PollGroup</AssemblyName>
         <IsPackable>true</IsPackable>

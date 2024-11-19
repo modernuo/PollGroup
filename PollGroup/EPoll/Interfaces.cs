@@ -8,7 +8,7 @@ internal interface IArch<TEvent> where TEvent : struct, IEpollEvent
 {
     public abstract static int epoll_create1(epoll_flags flags);
     public abstract static int epoll_close(int epfd);
-    public abstract static int epoll_ctl(int epfd, epoll_op op, int fd, ref TEvent ee);
+    public abstract static int epoll_ctl(int epfd, epoll_op op, nint fd, ref TEvent ee);
     public abstract static int epoll_wait(int epfd, [In, Out] TEvent[] ee, int maxevents, int timeout);
 }
 
