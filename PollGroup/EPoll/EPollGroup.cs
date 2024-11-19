@@ -7,7 +7,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
     where TArch : IArch<TEvent>
     where TEvent : struct, IEpollEvent
 {
-    private readonly int _epHndle;
+    private readonly nint _epHndle;
     private TEvent[] _events;
 
     public EPollGroup()
