@@ -7,7 +7,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
     where TArch : IArch<TEvent>
     where TEvent : struct, IEpollEvent
 {
-    private readonly int _epHndle;
+    private readonly nint _epHndle;
     private TEvent[] _events;
 
     public EPollGroup()
@@ -29,7 +29,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
             Ptr = (nint)handle
         };
 
-        TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_ADD, (int)socket.Handle, ref ev);
+        TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_ADD, socket.Handle, ref ev);
     }
 
     public int Poll(int maxEvents)
@@ -85,7 +85,7 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
             Ptr = (nint)handle
         };
 
-        int rc = TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_DEL, (int)socket.Handle, ref ev);
+        int rc = TArch.epoll_ctl(_epHndle, epoll_op.EPOLL_CTL_DEL, socket.Handle, ref ev);
 
         if (rc != 0)
         {
