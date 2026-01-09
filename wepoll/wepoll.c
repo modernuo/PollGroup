@@ -45,7 +45,8 @@ enum EPOLL_EVENTS {
   EPOLLWRBAND  = (int) (1U <<  9),
   EPOLLMSG     = (int) (1U << 10), /* Never reported. */
   EPOLLRDHUP   = (int) (1U << 13),
-  EPOLLONESHOT = (int) (1U << 31)
+  EPOLLONESHOT = (int) (1U << 30),
+  EPOLLET      = (int) (1U << 31)  /* Accepted but not fully emulated - Windows IOCP is level-triggered */
 };
 
 #define EPOLLIN      (1U <<  0)
@@ -59,11 +60,12 @@ enum EPOLL_EVENTS {
 #define EPOLLWRBAND  (1U <<  9)
 #define EPOLLMSG     (1U << 10)
 #define EPOLLRDHUP   (1U << 13)
-#define EPOLLONESHOT (1U << 31)
+#define EPOLLONESHOT (1U << 30)
+#define EPOLLET      (1U << 31)
 
 #define EPOLL_CTL_ADD 1
-#define EPOLL_CTL_MOD 2
-#define EPOLL_CTL_DEL 3
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
 
 typedef void* HANDLE;
 typedef uintptr_t SOCKET;
@@ -103,6 +105,8 @@ WEPOLL_EXPORT int epoll_wait(HANDLE ephnd,
                              int maxevents,
                              int timeout);
 
+WEPOLL_EXPORT int epoll_sock_is_ready(HANDLE ephnd, SOCKET sock);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
@@ -126,7 +130,7 @@ WEPOLL_EXPORT int epoll_wait(HANDLE ephnd,
 #define WIN32_LEAN_AND_MEAN
 
 #undef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0A00  /* Windows 10 / Windows Server 2016+ */
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -337,30 +341,33 @@ int afd_create_device_handle(HANDLE iocp_handle,
                              HANDLE* afd_device_handle_out) {
   HANDLE afd_device_handle;
   IO_STATUS_BLOCK iosb;
-  NTSTATUS status;
 
   /* By opening \Device\Afd without specifying any extended attributes, we'll
    * get a handle that lets us talk to the AFD driver, but that doesn't have an
    * associated endpoint (so it's not a socket). */
-  status = NtCreateFile(&afd_device_handle,
-                        SYNCHRONIZE,
-                        &afd__device_attributes,
-                        &iosb,
-                        NULL,
-                        0,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        FILE_OPEN,
-                        0,
-                        NULL,
-                        0);
+  const NTSTATUS status = NtCreateFile(&afd_device_handle,
+                                 SYNCHRONIZE,
+                                 &afd__device_attributes,
+                                 &iosb,
+                                 NULL,
+                                 0,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 FILE_OPEN,
+                                 0,
+                                 NULL,
+                                 0);
   if (status != STATUS_SUCCESS)
     return_set_error(-1, RtlNtStatusToDosError(status));
 
   if (CreateIoCompletionPort(afd_device_handle, iocp_handle, 0, 0) == NULL)
     goto error;
 
+  /* FILE_SKIP_SET_EVENT_ON_HANDLE: Don't set event on handle when I/O completes
+   * FILE_SKIP_COMPLETION_PORT_ON_SUCCESS: Skip IOCP notification if operation
+   * completes synchronously (Windows 8+). This reduces IOCP queue pressure. */
   if (!SetFileCompletionNotificationModes(afd_device_handle,
-                                          FILE_SKIP_SET_EVENT_ON_HANDLE))
+                                          FILE_SKIP_SET_EVENT_ON_HANDLE |
+                                          FILE_SKIP_COMPLETION_PORT_ON_SUCCESS))
     goto error;
 
   *afd_device_handle_out = afd_device_handle;
@@ -374,50 +381,44 @@ error:
 int afd_poll(HANDLE afd_device_handle,
              AFD_POLL_INFO* poll_info,
              IO_STATUS_BLOCK* io_status_block) {
-  NTSTATUS status;
-
-  /* Blocking operation is not supported. */
+    /* Blocking operation is not supported. */
   assert(io_status_block != NULL);
 
   io_status_block->Status = STATUS_PENDING;
-  status = NtDeviceIoControlFile(afd_device_handle,
-                                 NULL,
-                                 NULL,
-                                 io_status_block,
-                                 io_status_block,
-                                 IOCTL_AFD_POLL,
-                                 poll_info,
-                                 sizeof *poll_info,
-                                 poll_info,
-                                 sizeof *poll_info);
+  const NTSTATUS status = NtDeviceIoControlFile(afd_device_handle,
+                                          NULL,
+                                          NULL,
+                                          io_status_block,
+                                          io_status_block,
+                                          IOCTL_AFD_POLL,
+                                          poll_info,
+                                          sizeof *poll_info,
+                                          poll_info,
+                                          sizeof *poll_info);
 
   if (status == STATUS_SUCCESS)
     return 0;
-  else if (status == STATUS_PENDING)
-    return_set_error(-1, ERROR_IO_PENDING);
-  else
-    return_set_error(-1, RtlNtStatusToDosError(status));
+  if (status == STATUS_PENDING)
+      return_set_error(-1, ERROR_IO_PENDING);
+  return_set_error(-1, RtlNtStatusToDosError(status));
 }
 
-int afd_cancel_poll(HANDLE afd_device_handle,
-                    IO_STATUS_BLOCK* io_status_block) {
-  NTSTATUS cancel_status;
-  IO_STATUS_BLOCK cancel_iosb;
+int afd_cancel_poll(HANDLE afd_device_handle, IO_STATUS_BLOCK* io_status_block) {
+    IO_STATUS_BLOCK cancel_iosb;
 
   /* If the poll operation has already completed or has been cancelled earlier,
    * there's nothing left for us to do. */
   if (io_status_block->Status != STATUS_PENDING)
     return 0;
 
-  cancel_status =
-      NtCancelIoFileEx(afd_device_handle, io_status_block, &cancel_iosb);
+  const NTSTATUS cancel_status = NtCancelIoFileEx(afd_device_handle, io_status_block, &cancel_iosb);
 
   /* NtCancelIoFileEx() may return STATUS_NOT_FOUND if the operation completed
    * just before calling NtCancelIoFileEx(). This is not an error. */
   if (cancel_status == STATUS_SUCCESS || cancel_status == STATUS_NOT_FOUND)
     return 0;
-  else
-    return_set_error(-1, RtlNtStatusToDosError(cancel_status));
+
+  return_set_error(-1, RtlNtStatusToDosError(cancel_status));
 }
 
 WEPOLL_INTERNAL int epoll_global_init(void);
@@ -433,41 +434,25 @@ WEPOLL_INTERNAL port_state_t* port_new(HANDLE* iocp_handle_out);
 WEPOLL_INTERNAL int port_close(port_state_t* port_state);
 WEPOLL_INTERNAL int port_delete(port_state_t* port_state);
 
-WEPOLL_INTERNAL int port_wait(port_state_t* port_state,
-                              struct epoll_event* events,
-                              int maxevents,
-                              int timeout);
+WEPOLL_INTERNAL int port_wait(port_state_t* port_state, struct epoll_event* events, int maxevents, int timeout);
 
-WEPOLL_INTERNAL int port_ctl(port_state_t* port_state,
-                             int op,
-                             SOCKET sock,
-                             struct epoll_event* ev);
+WEPOLL_INTERNAL int port_ctl(port_state_t* port_state, int op, SOCKET sock, struct epoll_event* ev);
 
-WEPOLL_INTERNAL int port_register_socket(port_state_t* port_state,
-                                         sock_state_t* sock_state,
-                                         SOCKET socket);
-WEPOLL_INTERNAL void port_unregister_socket(port_state_t* port_state,
-                                            sock_state_t* sock_state);
-WEPOLL_INTERNAL sock_state_t* port_find_socket(port_state_t* port_state,
-                                               SOCKET socket);
+WEPOLL_INTERNAL int port_register_socket(port_state_t* port_state, sock_state_t* sock_state, SOCKET socket);
+WEPOLL_INTERNAL void port_unregister_socket(port_state_t* port_state, sock_state_t* sock_state);
+WEPOLL_INTERNAL sock_state_t* port_find_socket(port_state_t* port_state, SOCKET socket);
 
-WEPOLL_INTERNAL void port_request_socket_update(port_state_t* port_state,
-                                                sock_state_t* sock_state);
-WEPOLL_INTERNAL void port_cancel_socket_update(port_state_t* port_state,
-                                               sock_state_t* sock_state);
+WEPOLL_INTERNAL void port_request_socket_update(port_state_t* port_state, sock_state_t* sock_state);
+WEPOLL_INTERNAL void port_cancel_socket_update(port_state_t* port_state, sock_state_t* sock_state);
 
-WEPOLL_INTERNAL void port_add_deleted_socket(port_state_t* port_state,
-                                             sock_state_t* sock_state);
-WEPOLL_INTERNAL void port_remove_deleted_socket(port_state_t* port_state,
-                                                sock_state_t* sock_state);
+WEPOLL_INTERNAL void port_add_deleted_socket(port_state_t* port_state, sock_state_t* sock_state);
+WEPOLL_INTERNAL void port_remove_deleted_socket(port_state_t* port_state, sock_state_t* sock_state);
 
 WEPOLL_INTERNAL HANDLE port_get_iocp_handle(port_state_t* port_state);
 WEPOLL_INTERNAL queue_t* port_get_poll_group_queue(port_state_t* port_state);
 
-WEPOLL_INTERNAL port_state_t* port_state_from_handle_tree_node(
-    ts_tree_node_t* tree_node);
-WEPOLL_INTERNAL ts_tree_node_t* port_state_to_handle_tree_node(
-    port_state_t* port_state);
+WEPOLL_INTERNAL port_state_t* port_state_from_handle_tree_node(ts_tree_node_t* tree_node);
+WEPOLL_INTERNAL ts_tree_node_t* port_state_to_handle_tree_node(port_state_t* port_state);
 
 /* The reflock is a special kind of lock that normally prevents a chunk of
  * memory from being freed, but does allow the chunk of memory to eventually be
@@ -541,14 +526,10 @@ typedef struct ts_tree_node {
 WEPOLL_INTERNAL void ts_tree_init(ts_tree_t* rtl);
 WEPOLL_INTERNAL void ts_tree_node_init(ts_tree_node_t* node);
 
-WEPOLL_INTERNAL int ts_tree_add(ts_tree_t* ts_tree,
-                                ts_tree_node_t* node,
-                                uintptr_t key);
+WEPOLL_INTERNAL int ts_tree_add(ts_tree_t* ts_tree, ts_tree_node_t* node, uintptr_t key);
 
-WEPOLL_INTERNAL ts_tree_node_t* ts_tree_del_and_ref(ts_tree_t* ts_tree,
-                                                    uintptr_t key);
-WEPOLL_INTERNAL ts_tree_node_t* ts_tree_find_and_ref(ts_tree_t* ts_tree,
-                                                     uintptr_t key);
+WEPOLL_INTERNAL ts_tree_node_t* ts_tree_del_and_ref(ts_tree_t* ts_tree, uintptr_t key);
+WEPOLL_INTERNAL ts_tree_node_t* ts_tree_find_and_ref(ts_tree_t* ts_tree, uintptr_t key);
 
 WEPOLL_INTERNAL void ts_tree_node_unref(ts_tree_node_t* node);
 WEPOLL_INTERNAL void ts_tree_node_unref_and_destroy(ts_tree_node_t* node);
@@ -561,18 +542,16 @@ int epoll_global_init(void) {
 }
 
 static HANDLE epoll__create(void) {
-  port_state_t* port_state;
-  HANDLE ephnd;
-  ts_tree_node_t* tree_node;
+    HANDLE ephnd;
 
-  if (init() < 0)
+    if (init() < 0)
     return NULL;
 
-  port_state = port_new(&ephnd);
+  port_state_t* port_state = port_new(&ephnd);
   if (port_state == NULL)
     return NULL;
 
-  tree_node = port_state_to_handle_tree_node(port_state);
+  ts_tree_node_t* tree_node = port_state_to_handle_tree_node(port_state);
   if (ts_tree_add(&epoll__handle_tree, tree_node, (uintptr_t) ephnd) < 0) {
     /* This should never happen. */
     port_delete(port_state);
@@ -597,13 +576,12 @@ HANDLE epoll_create1(int flags) {
 }
 
 int epoll_close(HANDLE ephnd) {
-  ts_tree_node_t* tree_node;
   port_state_t* port_state;
 
   if (init() < 0)
     return -1;
 
-  tree_node = ts_tree_del_and_ref(&epoll__handle_tree, (uintptr_t) ephnd);
+  ts_tree_node_t* tree_node = ts_tree_del_and_ref(&epoll__handle_tree, (uintptr_t)ephnd);
   if (tree_node == NULL) {
     err_set_win_error(ERROR_INVALID_PARAMETER);
     goto err;
@@ -622,14 +600,13 @@ err:
 }
 
 int epoll_ctl(HANDLE ephnd, int op, SOCKET sock, struct epoll_event* ev) {
-  ts_tree_node_t* tree_node;
   port_state_t* port_state;
   int r;
 
   if (init() < 0)
     return -1;
 
-  tree_node = ts_tree_find_and_ref(&epoll__handle_tree, (uintptr_t) ephnd);
+  ts_tree_node_t* tree_node = ts_tree_find_and_ref(&epoll__handle_tree, (uintptr_t)ephnd);
   if (tree_node == NULL) {
     err_set_win_error(ERROR_INVALID_PARAMETER);
     goto err;
@@ -653,11 +630,7 @@ err:
   return -1;
 }
 
-int epoll_wait(HANDLE ephnd,
-               struct epoll_event* events,
-               int maxevents,
-               int timeout) {
-  ts_tree_node_t* tree_node;
+int epoll_wait(HANDLE ephnd, struct epoll_event* events, int maxevents, int timeout) {
   port_state_t* port_state;
   int num_events;
 
@@ -667,7 +640,7 @@ int epoll_wait(HANDLE ephnd,
   if (init() < 0)
     return -1;
 
-  tree_node = ts_tree_find_and_ref(&epoll__handle_tree, (uintptr_t) ephnd);
+  ts_tree_node_t* tree_node = ts_tree_find_and_ref(&epoll__handle_tree, (uintptr_t)ephnd);
   if (tree_node == NULL) {
     err_set_win_error(ERROR_INVALID_PARAMETER);
     goto err;
@@ -893,10 +866,9 @@ NT_NTDLL_IMPORT_LIST(X)
 #undef X
 
 int nt_global_init(void) {
-  HMODULE ntdll;
-  FARPROC fn_ptr;
+    FARPROC fn_ptr;
 
-  ntdll = GetModuleHandleW(L"ntdll.dll");
+  const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (ntdll == NULL)
     return -1;
 
@@ -951,7 +923,9 @@ WEPOLL_INTERNAL void queue_remove(queue_node_t* node);
 WEPOLL_INTERNAL bool queue_is_empty(const queue_t* queue);
 WEPOLL_INTERNAL bool queue_is_enqueued(const queue_node_t* node);
 
-#define POLL_GROUP__MAX_GROUP_SIZE 32
+/* Increased from 32 to 64 to reduce AFD device handle overhead.
+ * Each poll group shares one AFD device handle for up to this many sockets. */
+#define POLL_GROUP__MAX_GROUP_SIZE 64
 
 typedef struct poll_group {
   port_state_t* port_state;
@@ -961,7 +935,7 @@ typedef struct poll_group {
 } poll_group_t;
 
 static poll_group_t* poll_group__new(port_state_t* port_state) {
-  HANDLE iocp_handle = port_get_iocp_handle(port_state);
+  const HANDLE iocp_handle = port_get_iocp_handle(port_state);
   queue_t* poll_group_queue = port_get_poll_group_queue(port_state);
 
   poll_group_t* poll_group = malloc(sizeof *poll_group);
@@ -1031,29 +1005,20 @@ void poll_group_release(poll_group_t* poll_group) {
   /* Poll groups are currently only freed when the epoll port is closed. */
 }
 
-WEPOLL_INTERNAL sock_state_t* sock_new(port_state_t* port_state,
-                                       SOCKET socket);
-WEPOLL_INTERNAL void sock_delete(port_state_t* port_state,
-                                 sock_state_t* sock_state);
-WEPOLL_INTERNAL void sock_force_delete(port_state_t* port_state,
-                                       sock_state_t* sock_state);
+WEPOLL_INTERNAL sock_state_t* sock_new(port_state_t* port_state, SOCKET socket);
+WEPOLL_INTERNAL void sock_delete(port_state_t* port_state, sock_state_t* sock_state);
+WEPOLL_INTERNAL void sock_force_delete(port_state_t* port_state, sock_state_t* sock_state);
 
-WEPOLL_INTERNAL int sock_set_event(port_state_t* port_state,
-                                   sock_state_t* sock_state,
-                                   const struct epoll_event* ev);
+WEPOLL_INTERNAL int sock_set_event(port_state_t* port_state, sock_state_t* sock_state, const struct epoll_event* ev);
 
-WEPOLL_INTERNAL int sock_update(port_state_t* port_state,
-                                sock_state_t* sock_state);
-WEPOLL_INTERNAL int sock_feed_event(port_state_t* port_state,
-                                    IO_STATUS_BLOCK* io_status_block,
-                                    struct epoll_event* ev);
+WEPOLL_INTERNAL int sock_update(port_state_t* port_state, sock_state_t* sock_state);
+WEPOLL_INTERNAL int sock_feed_event(port_state_t* port_state, IO_STATUS_BLOCK* io_status_block, struct epoll_event* ev);
 
-WEPOLL_INTERNAL sock_state_t* sock_state_from_queue_node(
-    queue_node_t* queue_node);
-WEPOLL_INTERNAL queue_node_t* sock_state_to_queue_node(
-    sock_state_t* sock_state);
-WEPOLL_INTERNAL sock_state_t* sock_state_from_tree_node(
-    tree_node_t* tree_node);
+WEPOLL_INTERNAL bool sock_is_ready(sock_state_t* sock_state);
+
+WEPOLL_INTERNAL sock_state_t* sock_state_from_queue_node(queue_node_t* queue_node);
+WEPOLL_INTERNAL queue_node_t* sock_state_to_queue_node(sock_state_t* sock_state);
+WEPOLL_INTERNAL sock_state_t* sock_state_from_tree_node(tree_node_t* tree_node);
 WEPOLL_INTERNAL tree_node_t* sock_state_to_tree_node(sock_state_t* sock_state);
 
 #define PORT__MAX_ON_STACK_COMPLETIONS 256
@@ -1083,7 +1048,7 @@ static inline void port__free(port_state_t* port) {
 }
 
 static inline HANDLE port__create_iocp(void) {
-  HANDLE iocp_handle =
+  const HANDLE iocp_handle =
       CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
   if (iocp_handle == NULL)
     return_map_error(NULL);
@@ -1092,10 +1057,9 @@ static inline HANDLE port__create_iocp(void) {
 }
 
 port_state_t* port_new(HANDLE* iocp_handle_out) {
-  port_state_t* port_state;
   HANDLE iocp_handle;
 
-  port_state = port__alloc();
+  port_state_t* port_state = port__alloc();
   if (port_state == NULL)
     goto err1;
 
@@ -1123,7 +1087,7 @@ err1:
 }
 
 static inline int port__close_iocp(port_state_t* port_state) {
-  HANDLE iocp_handle = port_state->iocp_handle;
+  const HANDLE iocp_handle = port_state->iocp_handle;
   port_state->iocp_handle = NULL;
 
   if (!CloseHandle(iocp_handle))
@@ -1133,10 +1097,8 @@ static inline int port__close_iocp(port_state_t* port_state) {
 }
 
 int port_close(port_state_t* port_state) {
-  int result;
-
   EnterCriticalSection(&port_state->lock);
-  result = port__close_iocp(port_state);
+  const int result = port__close_iocp(port_state);
   LeaveCriticalSection(&port_state->lock);
 
   return result;
@@ -1174,7 +1136,7 @@ int port_delete(port_state_t* port_state) {
 }
 
 static int port__update_events(port_state_t* port_state) {
-  queue_t* sock_update_queue = &port_state->sock_update_queue;
+  const queue_t* sock_update_queue = &port_state->sock_update_queue;
 
   /* Walk the queue, submitting new poll requests for every socket that needs
    * it. */
@@ -1201,9 +1163,8 @@ static inline int port__feed_events(port_state_t* port_state,
                                     OVERLAPPED_ENTRY* iocp_events,
                                     DWORD iocp_event_count) {
   int epoll_event_count = 0;
-  DWORD i;
 
-  for (i = 0; i < iocp_event_count; i++) {
+  for (DWORD i = 0; i < iocp_event_count; i++) {
     IO_STATUS_BLOCK* io_status_block =
         (IO_STATUS_BLOCK*) iocp_events[i].lpOverlapped;
     struct epoll_event* ev = &epoll_events[epoll_event_count];
@@ -1228,7 +1189,7 @@ static inline int port__poll(port_state_t* port_state,
 
   LeaveCriticalSection(&port_state->lock);
 
-  BOOL r = GetQueuedCompletionStatusEx(port_state->iocp_handle,
+  const BOOL r = GetQueuedCompletionStatusEx(port_state->iocp_handle,
                                        iocp_events,
                                        maxevents,
                                        &completion_count,
@@ -1246,10 +1207,7 @@ static inline int port__poll(port_state_t* port_state,
       port_state, epoll_events, iocp_events, completion_count);
 }
 
-int port_wait(port_state_t* port_state,
-              struct epoll_event* events,
-              int maxevents,
-              int timeout) {
+int port_wait(port_state_t* port_state, struct epoll_event* events, int maxevents, int timeout) {
   OVERLAPPED_ENTRY stack_iocp_events[PORT__MAX_ON_STACK_COMPLETIONS];
   OVERLAPPED_ENTRY* iocp_events;
   uint64_t due = 0;
@@ -1286,9 +1244,7 @@ int port_wait(port_state_t* port_state,
   /* Dequeue completion packets until either at least one interesting event
    * has been discovered, or the timeout is reached. */
   for (;;) {
-    uint64_t now;
-
-    result = port__poll(
+      result = port__poll(
         port_state, events, iocp_events, (DWORD) maxevents, gqcs_timeout);
     if (result < 0 || result > 0)
       break; /* Result, error, or time-out. */
@@ -1297,7 +1253,7 @@ int port_wait(port_state_t* port_state,
       continue; /* When timeout is negative, never time out. */
 
     /* Update time. */
-    now = GetTickCount64();
+    const uint64_t now = GetTickCount64();
 
     /* Do not allow the due time to be in the past. */
     if (now >= due) {
@@ -1318,15 +1274,12 @@ int port_wait(port_state_t* port_state,
 
   if (result >= 0)
     return result;
-  else if (GetLastError() == WAIT_TIMEOUT)
-    return 0;
-  else
-    return -1;
+  if (GetLastError() == WAIT_TIMEOUT)
+      return 0;
+  return -1;
 }
 
-static inline int port__ctl_add(port_state_t* port_state,
-                                SOCKET sock,
-                                struct epoll_event* ev) {
+static inline int port__ctl_add(port_state_t* port_state, SOCKET sock, struct epoll_event* ev) {
   sock_state_t* sock_state = sock_new(port_state, sock);
   if (sock_state == NULL)
     return -1;
@@ -1341,9 +1294,7 @@ static inline int port__ctl_add(port_state_t* port_state,
   return 0;
 }
 
-static inline int port__ctl_mod(port_state_t* port_state,
-                                SOCKET sock,
-                                struct epoll_event* ev) {
+static inline int port__ctl_mod(port_state_t* port_state, SOCKET sock, struct epoll_event* ev) {
   sock_state_t* sock_state = port_find_socket(port_state, sock);
   if (sock_state == NULL)
     return -1;
@@ -1366,10 +1317,7 @@ static inline int port__ctl_del(port_state_t* port_state, SOCKET sock) {
   return 0;
 }
 
-static inline int port__ctl_op(port_state_t* port_state,
-                               int op,
-                               SOCKET sock,
-                               struct epoll_event* ev) {
+static inline int port__ctl_op(port_state_t* port_state, int op, SOCKET sock, struct epoll_event* ev) {
   switch (op) {
     case EPOLL_CTL_ADD:
       return port__ctl_add(port_state, sock, ev);
@@ -1382,31 +1330,22 @@ static inline int port__ctl_op(port_state_t* port_state,
   }
 }
 
-int port_ctl(port_state_t* port_state,
-             int op,
-             SOCKET sock,
-             struct epoll_event* ev) {
-  int result;
-
+int port_ctl(port_state_t* port_state, int op, SOCKET sock, struct epoll_event* ev) {
   EnterCriticalSection(&port_state->lock);
-  result = port__ctl_op(port_state, op, sock, ev);
+  const int result = port__ctl_op(port_state, op, sock, ev);
   LeaveCriticalSection(&port_state->lock);
 
   return result;
 }
 
-int port_register_socket(port_state_t* port_state,
-                         sock_state_t* sock_state,
-                         SOCKET socket) {
-  if (tree_add(&port_state->sock_tree,
-               sock_state_to_tree_node(sock_state),
+int port_register_socket(port_state_t* port_state, sock_state_t* sock_state, SOCKET socket) {
+  if (tree_add(&port_state->sock_tree, sock_state_to_tree_node(sock_state),
                socket) < 0)
     return_set_error(-1, ERROR_ALREADY_EXISTS);
   return 0;
 }
 
-void port_unregister_socket(port_state_t* port_state,
-                            sock_state_t* sock_state) {
+void port_unregister_socket(port_state_t* port_state, sock_state_t* sock_state) {
   tree_del(&port_state->sock_tree, sock_state_to_tree_node(sock_state));
 }
 
@@ -1417,32 +1356,27 @@ sock_state_t* port_find_socket(port_state_t* port_state, SOCKET socket) {
   return sock_state_from_tree_node(tree_node);
 }
 
-void port_request_socket_update(port_state_t* port_state,
-                                sock_state_t* sock_state) {
+void port_request_socket_update(port_state_t* port_state, sock_state_t* sock_state) {
   if (queue_is_enqueued(sock_state_to_queue_node(sock_state)))
     return;
-  queue_append(&port_state->sock_update_queue,
-               sock_state_to_queue_node(sock_state));
+  queue_append(&port_state->sock_update_queue, sock_state_to_queue_node(sock_state));
 }
 
-void port_cancel_socket_update(port_state_t* port_state,
-                               sock_state_t* sock_state) {
+void port_cancel_socket_update(port_state_t* port_state, sock_state_t* sock_state) {
   unused_var(port_state);
   if (!queue_is_enqueued(sock_state_to_queue_node(sock_state)))
     return;
   queue_remove(sock_state_to_queue_node(sock_state));
 }
 
-void port_add_deleted_socket(port_state_t* port_state,
-                             sock_state_t* sock_state) {
+void port_add_deleted_socket(port_state_t* port_state, sock_state_t* sock_state) {
   if (queue_is_enqueued(sock_state_to_queue_node(sock_state)))
     return;
   queue_append(&port_state->sock_deleted_queue,
                sock_state_to_queue_node(sock_state));
 }
 
-void port_remove_deleted_socket(port_state_t* port_state,
-                                sock_state_t* sock_state) {
+void port_remove_deleted_socket(port_state_t* port_state, sock_state_t* sock_state) {
   unused_var(port_state);
   if (!queue_is_enqueued(sock_state_to_queue_node(sock_state)))
     return;
@@ -1534,8 +1468,7 @@ bool queue_is_enqueued(const queue_node_t* node) {
 static HANDLE reflock__keyed_event = NULL;
 
 int reflock_global_init(void) {
-  NTSTATUS status = NtCreateKeyedEvent(
-      &reflock__keyed_event, KEYEDEVENT_ALL_ACCESS, NULL, 0);
+  const NTSTATUS status = NtCreateKeyedEvent(&reflock__keyed_event, KEYEDEVENT_ALL_ACCESS, NULL, 0);
   if (status != STATUS_SUCCESS)
     return_set_error(-1, RtlNtStatusToDosError(status));
   return 0;
@@ -1546,21 +1479,19 @@ void reflock_init(reflock_t* reflock) {
 }
 
 static void reflock__signal_event(void* address) {
-  NTSTATUS status =
-      NtReleaseKeyedEvent(reflock__keyed_event, address, FALSE, NULL);
+  const NTSTATUS status = NtReleaseKeyedEvent(reflock__keyed_event, address, FALSE, NULL);
   if (status != STATUS_SUCCESS)
     abort();
 }
 
 static void reflock__await_event(void* address) {
-  NTSTATUS status =
-      NtWaitForKeyedEvent(reflock__keyed_event, address, FALSE, NULL);
+  const NTSTATUS status = NtWaitForKeyedEvent(reflock__keyed_event, address, FALSE, NULL);
   if (status != STATUS_SUCCESS)
     abort();
 }
 
 void reflock_ref(reflock_t* reflock) {
-  long state = InterlockedAdd(&reflock->state, REFLOCK__REF);
+  const long state = InterlockedAdd(&reflock->state, REFLOCK__REF);
 
   /* Verify that the counter didn't overflow and the lock isn't destroyed. */
   assert((state & REFLOCK__DESTROY_MASK) == 0);
@@ -1568,7 +1499,7 @@ void reflock_ref(reflock_t* reflock) {
 }
 
 void reflock_unref(reflock_t* reflock) {
-  long state = InterlockedAdd(&reflock->state, -REFLOCK__REF);
+  const long state = InterlockedAdd(&reflock->state, -REFLOCK__REF);
 
   /* Verify that the lock was referenced and not already destroyed. */
   assert((state & REFLOCK__DESTROY_MASK & ~REFLOCK__DESTROY) == 0);
@@ -1578,9 +1509,8 @@ void reflock_unref(reflock_t* reflock) {
 }
 
 void reflock_unref_and_destroy(reflock_t* reflock) {
-  long state =
-      InterlockedAdd(&reflock->state, REFLOCK__DESTROY - REFLOCK__REF);
-  long ref_count = state & REFLOCK__REF_MASK;
+  long state = InterlockedAdd(&reflock->state, REFLOCK__DESTROY - REFLOCK__REF);
+  const long ref_count = state & REFLOCK__REF_MASK;
 
   /* Verify that the lock was referenced and not already destroyed. */
   assert((state & REFLOCK__DESTROY_MASK) == REFLOCK__DESTROY);
@@ -1631,8 +1561,7 @@ static inline void sock__free(sock_state_t* sock_state) {
 static inline int sock__cancel_poll(sock_state_t* sock_state) {
   assert(sock_state->poll_status == SOCK__POLL_PENDING);
 
-  if (afd_cancel_poll(poll_group_get_afd_device_handle(sock_state->poll_group),
-                      &sock_state->io_status_block) < 0)
+  if (afd_cancel_poll(poll_group_get_afd_device_handle(sock_state->poll_group), &sock_state->io_status_block) < 0)
     return -1;
 
   sock_state->poll_status = SOCK__POLL_CANCELLED;
@@ -1640,23 +1569,110 @@ static inline int sock__cancel_poll(sock_state_t* sock_state) {
   return 0;
 }
 
+/* Wait for a pending/cancelled poll operation to complete.
+ * This is critical for socket migration between epoll instances - we must
+ * ensure the old AFD poll operation is fully complete before adding the
+ * socket to a new epoll instance, otherwise the AFD driver may not deliver
+ * events to the new instance.
+ *
+ * Parameters:
+ *   port_state: The port state (lock will be released during wait)
+ *   sock_state: The socket state with pending operation
+ *   timeout_ms: Maximum time to wait in milliseconds (0 = infinite)
+ *
+ * Returns: 0 on success, -1 on timeout or error
+ *
+ * Note: This function temporarily releases the port lock while waiting
+ * to avoid blocking other operations on the same epoll instance.
+ */
+static int sock__wait_for_poll_completion(port_state_t* port_state, sock_state_t* sock_state, DWORD timeout_ms) {
+  const HANDLE iocp_handle = port_state->iocp_handle;
+  OVERLAPPED_ENTRY entries[16];
+  const DWORD start_time = GetTickCount();
+  DWORD remaining;
+
+  /* If already idle, nothing to wait for */
+  if (sock_state->poll_status == SOCK__POLL_IDLE)
+    return 0;
+
+  /* Release lock while waiting to allow other threads to use this port */
+  LeaveCriticalSection(&port_state->lock);
+
+  while (sock_state->io_status_block.Status == STATUS_PENDING) {
+    DWORD count = 0;
+
+    /* Calculate remaining timeout */
+    if (timeout_ms == 0) {
+      remaining = INFINITE;
+    } else {
+      const DWORD elapsed = GetTickCount() - start_time;
+      if (elapsed >= timeout_ms) {
+        /* Timeout - reacquire lock and return error */
+        EnterCriticalSection(&port_state->lock);
+        return_set_error(-1, WAIT_TIMEOUT);
+      }
+      remaining = timeout_ms - elapsed;
+    }
+
+    /* Wait for completions with a bounded timeout to allow checking status */
+    const BOOL success = GetQueuedCompletionStatusEx(
+        iocp_handle,
+        entries,
+        array_count(entries),
+        &count,
+        remaining < 100 ? remaining : 100, /* Check every 100ms max */
+        FALSE);
+
+    if (!success) {
+      const DWORD error = GetLastError();
+      if (error != WAIT_TIMEOUT) {
+        EnterCriticalSection(&port_state->lock);
+        return_set_error(-1, error);
+      }
+      /* Timeout on this iteration - loop and check status again */
+      continue;
+    }
+
+    /* Process any completions we received.
+     * We need to feed these back to the port state so they're not lost.
+     * However, we can't call the full processing here since we don't
+     * hold the lock. Instead, we just check if our specific completion
+     * arrived and let the normal processing handle the rest. */
+    for (DWORD i = 0; i < count; i++) {
+      const IO_STATUS_BLOCK* iosb = (IO_STATUS_BLOCK*)entries[i].lpOverlapped;
+
+      /* Check if this is our completion */
+      if (iosb == &sock_state->io_status_block) {
+        /* Our poll completed - we can stop waiting */
+        /* The actual processing will happen when sock_feed_event is called,
+         * but the io_status_block.Status is no longer STATUS_PENDING */
+        goto done;
+      }
+
+      /* For other completions, we need to re-queue them to the IOCP
+       * so they're not lost. We use PostQueuedCompletionStatus. */
+      PostQueuedCompletionStatus(iocp_handle, (DWORD)iosb->Information, entries[i].lpCompletionKey, entries[i].lpOverlapped);
+    }
+  }
+
+done:
+  EnterCriticalSection(&port_state->lock);
+  return 0;
+}
+
 sock_state_t* sock_new(port_state_t* port_state, SOCKET socket) {
-  SOCKET base_socket;
-  poll_group_t* poll_group;
-  sock_state_t* sock_state;
-
   if (socket == 0 || socket == INVALID_SOCKET)
-    return_set_error(NULL, ERROR_INVALID_HANDLE);
+  return_set_error(NULL, ERROR_INVALID_HANDLE);
 
-  base_socket = ws_get_base_socket(socket);
+  const SOCKET base_socket = ws_get_base_socket(socket);
   if (base_socket == INVALID_SOCKET)
     return NULL;
 
-  poll_group = poll_group_acquire(port_state);
+  poll_group_t* poll_group = poll_group_acquire(port_state);
   if (poll_group == NULL)
     return NULL;
 
-  sock_state = sock__alloc();
+  sock_state_t* sock_state = sock__alloc();
   if (sock_state == NULL)
     goto err1;
 
@@ -1681,17 +1697,20 @@ err1:
   return NULL;
 }
 
-static int sock__delete(port_state_t* port_state,
-                        sock_state_t* sock_state,
-                        bool force) {
+static int sock__delete(port_state_t* port_state, sock_state_t* sock_state, bool force) {
   if (!sock_state->delete_pending) {
     if (sock_state->poll_status == SOCK__POLL_PENDING)
       sock__cancel_poll(sock_state);
 
     port_cancel_socket_update(port_state, sock_state);
-    port_unregister_socket(port_state, sock_state);
-
     sock_state->delete_pending = true;
+
+    /* If poll is still pending/cancelled, keep socket in tree so callers
+     * can check its status via epoll_sock_is_ready(). The socket will be
+     * fully cleaned up when the poll completes in sock_feed_event(). */
+    if (sock_state->poll_status == SOCK__POLL_IDLE) {
+      port_unregister_socket(port_state, sock_state);
+    }
   }
 
   /* If the poll request still needs to complete, the sock_state object can't
@@ -1699,6 +1718,10 @@ static int sock__delete(port_state_t* port_state,
    * of this later. */
   if (force || sock_state->poll_status == SOCK__POLL_IDLE) {
     /* Free the sock_state now. */
+    if (sock_state->poll_status != SOCK__POLL_IDLE) {
+      /* Force delete with pending poll - unregister now */
+      port_unregister_socket(port_state, sock_state);
+    }
     port_remove_deleted_socket(port_state, sock_state);
     poll_group_release(sock_state->poll_group);
     sock__free(sock_state);
@@ -1710,21 +1733,92 @@ static int sock__delete(port_state_t* port_state,
   return 0;
 }
 
+/* Delete a socket. If a poll operation is pending, it will be cancelled
+ * but the socket remains findable until the cancellation completes.
+ * Use epoll_sock_is_ready() to check if the socket is ready for migration. */
 void sock_delete(port_state_t* port_state, sock_state_t* sock_state) {
   sock__delete(port_state, sock_state, false);
 }
 
+/* Force delete a socket without waiting for poll completion.
+ * Used during port cleanup when we don't need to support socket migration. */
 void sock_force_delete(port_state_t* port_state, sock_state_t* sock_state) {
   sock__delete(port_state, sock_state, true);
 }
 
-int sock_set_event(port_state_t* port_state,
-                   sock_state_t* sock_state,
-                   const struct epoll_event* ev) {
+/* Check if a socket's pending poll operation has completed.
+ * Returns true if the socket is ready (no pending operations),
+ * false if still pending. */
+bool sock_is_ready(sock_state_t* sock_state) {
+  return sock_state->poll_status == SOCK__POLL_IDLE;
+}
+
+/* Check if a socket is ready after being removed from an epoll instance.
+ * When epoll_ctl(EPOLL_CTL_DEL) is called on a socket with a pending poll
+ * operation, the poll is cancelled asynchronously. This function allows
+ * checking whether the cancellation has completed, which is necessary
+ * before adding the socket to another epoll instance.
+ *
+ * Returns:
+ *   0  - Socket is ready (no pending operations) and can be added elsewhere
+ *  -1  - Socket still has pending operation (errno = EAGAIN)
+ *  -1  - Socket not found or other error (errno = ENOENT or other)
+ */
+WEPOLL_EXPORT int epoll_sock_is_ready(HANDLE ephnd, SOCKET sock) {
+  port_state_t* port_state;
+  sock_state_t* sock_state;
+  int result;
+
+  if (init() < 0)
+    return -1;
+
+  ts_tree_node_t* tree_node = ts_tree_find_and_ref(&epoll__handle_tree, (uintptr_t)ephnd);
+  if (tree_node == NULL) {
+    err_set_win_error(ERROR_INVALID_PARAMETER);
+    goto err;
+  }
+
+  port_state = port_state_from_handle_tree_node(tree_node);
+
+  EnterCriticalSection(&port_state->lock);
+
+  sock_state = port_find_socket(port_state, sock);
+  if (sock_state == NULL) {
+    /* Socket not found - either never added, already fully removed,
+     * or removed from a different epoll instance. If it was properly
+     * removed and poll completed, it won't be in the tree anymore,
+     * so this means it's ready. */
+    result = 0;
+  } else if (!sock_state->delete_pending) {
+    /* Socket is still active (not being deleted) - this is an error */
+    LeaveCriticalSection(&port_state->lock);
+    ts_tree_node_unref(tree_node);
+    return_set_error(-1, ERROR_INVALID_PARAMETER);
+  } else if (sock_is_ready(sock_state)) {
+    /* Socket was deleted and poll has completed - ready for migration */
+    result = 0;
+  } else {
+    /* Socket was deleted but poll is still pending */
+    result = -1;
+    err_set_win_error(ERROR_IO_PENDING);
+  }
+
+  LeaveCriticalSection(&port_state->lock);
+  ts_tree_node_unref(tree_node);
+
+  return result;
+
+err:
+  err_check_handle(ephnd);
+  err_check_handle((HANDLE) sock);
+  return -1;
+}
+
+int sock_set_event(port_state_t* port_state, sock_state_t* sock_state, const struct epoll_event* ev) {
   /* EPOLLERR and EPOLLHUP are always reported, even when not requested by the
-   * caller. However they are disabled after a event has been reported for a
+   * caller. However, they are disabled after a event has been reported for a
    * socket for which the EPOLLONESHOT flag was set. */
-  uint32_t events = ev->events | EPOLLERR | EPOLLHUP;
+  const uint32_t events = ev->events | EPOLLERR | EPOLLHUP;
 
   sock_state->user_events = events;
   sock_state->user_data = ev->data;
@@ -1780,7 +1874,7 @@ static inline uint32_t sock__afd_events_to_epoll_events(DWORD afd_events) {
 int sock_update(port_state_t* port_state, sock_state_t* sock_state) {
   assert(!sock_state->delete_pending);
 
-  if ((sock_state->poll_status == SOCK__POLL_PENDING) &&
+  if (sock_state->poll_status == SOCK__POLL_PENDING &&
       (sock_state->user_events & SOCK__KNOWN_EPOLL_EVENTS &
        ~sock_state->pending_events) == 0) {
     /* All the events the user is interested in are already being monitored by
@@ -1839,39 +1933,39 @@ int sock_update(port_state_t* port_state, sock_state_t* sock_state) {
   return 0;
 }
 
-int sock_feed_event(port_state_t* port_state,
-                    IO_STATUS_BLOCK* io_status_block,
-                    struct epoll_event* ev) {
-  sock_state_t* sock_state =
-      container_of(io_status_block, sock_state_t, io_status_block);
-  AFD_POLL_INFO* poll_info = &sock_state->poll_info;
+int sock_feed_event(port_state_t* port_state, IO_STATUS_BLOCK* io_status_block, struct epoll_event* ev) {
+  sock_state_t* sock_state = container_of(io_status_block, sock_state_t, io_status_block);
+  const AFD_POLL_INFO* poll_info = &sock_state->poll_info;
   uint32_t epoll_events = 0;
 
   sock_state->poll_status = SOCK__POLL_IDLE;
   sock_state->pending_events = 0;
 
   if (sock_state->delete_pending) {
-    /* Socket has been deleted earlier and can now be freed. */
+    /* Socket has been deleted earlier and can now be freed.
+     * Now that poll is complete, unregister from tree and clean up. */
+    port_unregister_socket(port_state, sock_state);
     return sock__delete(port_state, sock_state, false);
 
-  } else if (io_status_block->Status == STATUS_CANCELLED) {
-    /* The poll request was cancelled by CancelIoEx. */
+  }
+  if (io_status_block->Status == STATUS_CANCELLED) {
+      /* The poll request was cancelled by CancelIoEx. */
 
   } else if (!NT_SUCCESS(io_status_block->Status)) {
-    /* The overlapped request itself failed in an unexpected way. */
-    epoll_events = EPOLLERR;
+      /* The overlapped request itself failed in an unexpected way. */
+      epoll_events = EPOLLERR;
 
   } else if (poll_info->NumberOfHandles < 1) {
-    /* This poll operation succeeded but didn't report any socket events. */
+      /* This poll operation succeeded but didn't report any socket events. */
 
   } else if (poll_info->Handles[0].Events & AFD_POLL_LOCAL_CLOSE) {
-    /* The poll operation reported that the socket was closed. */
-    return sock__delete(port_state, sock_state, false);
+      /* The poll operation reported that the socket was closed. */
+      return sock__delete(port_state, sock_state, false);
 
   } else {
-    /* Events related to our socket were reported. */
-    epoll_events =
-        sock__afd_events_to_epoll_events(poll_info->Handles[0].Events);
+      /* Events related to our socket were reported. */
+      epoll_events =
+          sock__afd_events_to_epoll_events(poll_info->Handles[0].Events);
   }
 
   /* Requeue the socket so a new poll request will be submitted. */
@@ -1884,7 +1978,7 @@ int sock_feed_event(port_state_t* port_state,
   if (epoll_events == 0)
     return 0;
 
-  /* If the the socket has the EPOLLONESHOT flag set, unmonitor all events,
+  /* If the socket has the EPOLLONESHOT flag set, unmonitor all events,
    * even EPOLLERR and EPOLLHUP. But always keep looking for closed sockets. */
   if (sock_state->user_events & EPOLLONESHOT)
     sock_state->user_events = 0;
@@ -1921,17 +2015,14 @@ void ts_tree_node_init(ts_tree_node_t* node) {
 }
 
 int ts_tree_add(ts_tree_t* ts_tree, ts_tree_node_t* node, uintptr_t key) {
-  int r;
-
   AcquireSRWLockExclusive(&ts_tree->lock);
-  r = tree_add(&ts_tree->tree, &node->tree_node, key);
+  const int r = tree_add(&ts_tree->tree, &node->tree_node, key);
   ReleaseSRWLockExclusive(&ts_tree->lock);
 
   return r;
 }
 
-static inline ts_tree_node_t* ts_tree__find_node(ts_tree_t* ts_tree,
-                                                 uintptr_t key) {
+static inline ts_tree_node_t* ts_tree__find_node(ts_tree_t* ts_tree, uintptr_t key) {
   tree_node_t* tree_node = tree_find(&ts_tree->tree, key);
   if (tree_node == NULL)
     return NULL;
@@ -1940,11 +2031,9 @@ static inline ts_tree_node_t* ts_tree__find_node(ts_tree_t* ts_tree,
 }
 
 ts_tree_node_t* ts_tree_del_and_ref(ts_tree_t* ts_tree, uintptr_t key) {
-  ts_tree_node_t* ts_tree_node;
-
   AcquireSRWLockExclusive(&ts_tree->lock);
 
-  ts_tree_node = ts_tree__find_node(ts_tree, key);
+  ts_tree_node_t* ts_tree_node = ts_tree__find_node(ts_tree, key);
   if (ts_tree_node != NULL) {
     tree_del(&ts_tree->tree, &ts_tree_node->tree_node);
     reflock_ref(&ts_tree_node->reflock);
@@ -1956,11 +2045,9 @@ ts_tree_node_t* ts_tree_del_and_ref(ts_tree_t* ts_tree, uintptr_t key) {
 }
 
 ts_tree_node_t* ts_tree_find_and_ref(ts_tree_t* ts_tree, uintptr_t key) {
-  ts_tree_node_t* ts_tree_node;
-
   AcquireSRWLockShared(&ts_tree->lock);
 
-  ts_tree_node = ts_tree__find_node(ts_tree, key);
+  ts_tree_node_t* ts_tree_node = ts_tree__find_node(ts_tree, key);
   if (ts_tree_node != NULL)
     reflock_ref(&ts_tree_node->reflock);
 
@@ -2042,9 +2129,7 @@ static inline void tree__rotate_right(tree_t* tree, tree_node_t* node) {
   }
 
 int tree_add(tree_t* tree, tree_node_t* node, uintptr_t key) {
-  tree_node_t* parent;
-
-  parent = tree->root;
+  tree_node_t* parent = tree->root;
   if (parent) {
     for (;;) {
       if (key < parent->key) {
@@ -2200,10 +2285,9 @@ tree_node_t* tree_root(const tree_t* tree) {
 #endif
 
 int ws_global_init(void) {
-  int r;
-  WSADATA wsa_data;
+    WSADATA wsa_data;
 
-  r = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+  const int r = WSAStartup(MAKEWORD(2, 2), &wsa_data);
   if (r != 0)
     return_set_error(-1, (DWORD) r);
 
@@ -2224,38 +2308,34 @@ static inline SOCKET ws__ioctl_get_bsp_socket(SOCKET socket, DWORD ioctl) {
                NULL,
                NULL) != SOCKET_ERROR)
     return bsp_socket;
-  else
-    return INVALID_SOCKET;
+  return INVALID_SOCKET;
 }
 
 SOCKET ws_get_base_socket(SOCKET socket) {
-  SOCKET base_socket;
-  DWORD error;
+    for (;;) {
+      SOCKET base_socket = ws__ioctl_get_bsp_socket(socket, SIO_BASE_HANDLE);
+      if (base_socket != INVALID_SOCKET)
+        return base_socket;
 
-  for (;;) {
-    base_socket = ws__ioctl_get_bsp_socket(socket, SIO_BASE_HANDLE);
-    if (base_socket != INVALID_SOCKET)
-      return base_socket;
+      const DWORD error = GetLastError();
+      if (error == WSAENOTSOCK)
+        return_set_error(INVALID_SOCKET, error);
 
-    error = GetLastError();
-    if (error == WSAENOTSOCK)
-      return_set_error(INVALID_SOCKET, error);
-
-    /* Even though Microsoft documentation clearly states that LSPs should
-     * never intercept the `SIO_BASE_HANDLE` ioctl [1], Komodia based LSPs do
-     * so anyway, breaking it, with the apparent intention of preventing LSP
-     * bypass [2]. Fortunately they don't handle `SIO_BSP_HANDLE_POLL`, which
-     * will at least let us obtain the socket associated with the next winsock
-     * protocol chain entry. If this succeeds, loop around and call
-     * `SIO_BASE_HANDLE` again with the returned BSP socket, to make sure that
-     * we unwrap all layers and retrieve the actual base socket.
-     *  [1] https://docs.microsoft.com/en-us/windows/win32/winsock/winsock-ioctls
-     *  [2] https://www.komodia.com/newwiki/index.php?title=Komodia%27s_Redirector_bug_fixes#Version_2.2.2.6
-     */
-    base_socket = ws__ioctl_get_bsp_socket(socket, SIO_BSP_HANDLE_POLL);
-    if (base_socket != INVALID_SOCKET && base_socket != socket)
-      socket = base_socket;
-    else
-      return_set_error(INVALID_SOCKET, error);
+      /* Even though Microsoft documentation clearly states that LSPs should
+       * never intercept the `SIO_BASE_HANDLE` ioctl [1], Komodia based LSPs do
+       * so anyway, breaking it, with the apparent intention of preventing LSP
+       * bypass [2]. Fortunately they don't handle `SIO_BSP_HANDLE_POLL`, which
+       * will at least let us obtain the socket associated with the next winsock
+       * protocol chain entry. If this succeeds, loop around and call
+       * `SIO_BASE_HANDLE` again with the returned BSP socket, to make sure that
+       * we unwrap all layers and retrieve the actual base socket.
+       *  [1] https://docs.microsoft.com/en-us/windows/win32/winsock/winsock-ioctls
+       *  [2] https://www.komodia.com/newwiki/index.php?title=Komodia%27s_Redirector_bug_fixes#Version_2.2.2.6
+       */
+      base_socket = ws__ioctl_get_bsp_socket(socket, SIO_BSP_HANDLE_POLL);
+      if (base_socket != INVALID_SOCKET && base_socket != socket)
+        socket = base_socket;
+      else
+        return_set_error(INVALID_SOCKET, error);
   }
 }

@@ -49,11 +49,12 @@
 #define EPOLLWRBAND  (1U <<  9)
 #define EPOLLMSG     (1U << 10)
 #define EPOLLRDHUP   (1U << 13)
-#define EPOLLONESHOT (1U << 31)
+#define EPOLLONESHOT (1U << 30)
+#define EPOLLET      (1U << 31)
 
 #define EPOLL_CTL_ADD 1
-#define EPOLL_CTL_MOD 2
-#define EPOLL_CTL_DEL 3
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
 
 typedef void* HANDLE;
 typedef uintptr_t SOCKET;
@@ -76,6 +77,11 @@ WEPOLL_EXPORT int epoll_wait(HANDLE ephnd,
                              struct epoll_event* events,
                              int maxevents,
                              int timeout);
+
+/* Check if a socket is ready for migration after EPOLL_CTL_DEL.
+ * Returns 0 if ready, -1 if still pending (errno = EAGAIN).
+ * This is a wepoll extension - not part of the Linux epoll API. */
+WEPOLL_EXPORT int epoll_sock_is_ready(HANDLE ephnd, SOCKET sock);
 
 #ifdef __cplusplus
 } /* extern "C" */

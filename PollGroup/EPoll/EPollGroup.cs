@@ -93,6 +93,16 @@ internal sealed class EPollGroup<TArch, TEvent> : IPollGroup
         }
     }
 
+    /// <summary>
+    /// Check if a socket is ready for migration after being removed.
+    /// On Windows (wepoll), epoll_ctl(EPOLL_CTL_DEL) cancels poll asynchronously.
+    /// On Linux, EPOLL_CTL_DEL is synchronous so this always returns true.
+    /// </summary>
+    public bool IsSocketReady(Socket socket)
+    {
+        return TArch.epoll_sock_is_ready(_epHndle, socket.Handle) == 0;
+    }
+
     public void Dispose()
     {
         TArch.epoll_close(_epHndle);
