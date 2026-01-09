@@ -364,7 +364,8 @@ int afd_create_device_handle(HANDLE iocp_handle,
 
   /* FILE_SKIP_SET_EVENT_ON_HANDLE: Don't set event on handle when I/O completes
    * FILE_SKIP_COMPLETION_PORT_ON_SUCCESS: Skip IOCP notification if operation
-   * completes synchronously (Windows 8+). This reduces IOCP queue pressure. */
+   * completes synchronously. When this is set, synchronous completions must be
+   * manually posted to IOCP via PostQueuedCompletionStatus. */
   if (!SetFileCompletionNotificationModes(afd_device_handle,
                                           FILE_SKIP_SET_EVENT_ON_HANDLE |
                                           FILE_SKIP_COMPLETION_PORT_ON_SUCCESS))
@@ -1891,9 +1892,11 @@ int sock_update(port_state_t* port_state, sock_state_t* sock_state) {
     sock_state->poll_info.Handles[0].Status = 0;
     sock_state->poll_info.Handles[0].Events = sock__epoll_events_to_afd_events(sock_state->user_events);
 
-    if (afd_poll(poll_group_get_afd_device_handle(sock_state->poll_group),
+    const int afd_result = afd_poll(poll_group_get_afd_device_handle(sock_state->poll_group),
                  &sock_state->poll_info,
-                 &sock_state->io_status_block) < 0) {
+                 &sock_state->io_status_block);
+
+    if (afd_result < 0) {
       switch (GetLastError()) {
         case ERROR_IO_PENDING:
           /* Overlapped poll operation in progress; this is expected. */
@@ -1905,6 +1908,14 @@ int sock_update(port_state_t* port_state, sock_state_t* sock_state) {
           /* Other errors are propagated to the caller. */
           return_map_error(-1);
       }
+    } else {
+      /* afd_poll completed synchronously. With FILE_SKIP_COMPLETION_PORT_ON_SUCCESS,
+       * no IOCP notification will be posted, so we must manually post it. */
+      if (!PostQueuedCompletionStatus(port_state->iocp_handle,
+                                      0,
+                                      0,
+                                      (LPOVERLAPPED)&sock_state->io_status_block))
+        return_map_error(-1);
     }
 
     /* The poll request was successfully submitted. */
