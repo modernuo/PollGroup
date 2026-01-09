@@ -244,6 +244,11 @@ public sealed partial class KQueuePollGroup : IPollGroup
 
         return rc;
     }
+
+    /// <summary>
+    /// On BSD/macOS, kevent EV_DELETE is synchronous, so socket is always immediately ready.
+    /// </summary>
+    public bool IsSocketReady(Socket socket) => true;
 }
 
 #pragma warning restore IDE1006 // Naming Styles

@@ -6,3 +6,7 @@ Release/
 .vs/
 .DS_Store
 PollGroup.sln.DotSettings.user
+wepoll/wepoll.dll
+wepoll/wepoll.exp
+wepoll/wepoll.lib
+wepoll/wepoll.obj

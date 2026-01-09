@@ -38,24 +38,25 @@
 
 #include <stdint.h>
 
-#define EPOLLIN      (1U <<  0)
-#define EPOLLPRI     (1U <<  1)
-#define EPOLLOUT     (1U <<  2)
-#define EPOLLERR     (1U <<  3)
-#define EPOLLHUP     (1U <<  4)
-#define EPOLLRDNORM  (1U <<  6)
-#define EPOLLRDBAND  (1U <<  7)
-#define EPOLLWRNORM  (1U <<  8)
-#define EPOLLWRBAND  (1U <<  9)
-#define EPOLLMSG     (1U << 10)
-#define EPOLLRDHUP   (1U << 13)
-#define EPOLLONESHOT (1U << 31)
+#define EPOLLIN (1U << 0)
+#define EPOLLPRI (1U << 1)
+#define EPOLLOUT (1U << 2)
+#define EPOLLERR (1U << 3)
+#define EPOLLHUP (1U << 4)
+#define EPOLLRDNORM (1U << 6)
+#define EPOLLRDBAND (1U << 7)
+#define EPOLLWRNORM (1U << 8)
+#define EPOLLWRBAND (1U << 9)
+#define EPOLLMSG (1U << 10)
+#define EPOLLRDHUP (1U << 13)
+#define EPOLLONESHOT (1U << 30)
+#define EPOLLET (1U << 31)
 
 #define EPOLL_CTL_ADD 1
-#define EPOLL_CTL_MOD 2
-#define EPOLL_CTL_DEL 3
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
 
-typedef void* HANDLE;
+typedef void *HANDLE;
 typedef uintptr_t SOCKET;
 
 #ifdef __cplusplus
@@ -67,15 +68,14 @@ WEPOLL_EXPORT HANDLE epoll_create1(int flags);
 
 WEPOLL_EXPORT int epoll_close(HANDLE ephnd);
 
-WEPOLL_EXPORT int epoll_ctl(HANDLE ephnd,
-                            int op,
-                            SOCKET sock,
-                            struct epoll_event* event);
+WEPOLL_EXPORT int epoll_ctl(HANDLE ephnd, int op, SOCKET sock, struct epoll_event *event);
 
-WEPOLL_EXPORT int epoll_wait(HANDLE ephnd,
-                             struct epoll_event* events,
-                             int maxevents,
-                             int timeout);
+WEPOLL_EXPORT int epoll_wait(HANDLE ephnd, struct epoll_event *events, int maxevents, int timeout);
+
+/* Check if a socket is ready for migration after EPOLL_CTL_DEL.
+ * Returns 0 if ready, -1 if still pending (errno = EAGAIN).
+ * This is a wepoll extension - not part of the Linux epoll API. */
+WEPOLL_EXPORT int epoll_sock_is_ready(HANDLE ephnd, SOCKET sock);
 
 #ifdef __cplusplus
 } /* extern "C" */
