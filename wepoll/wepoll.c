@@ -378,9 +378,7 @@ error:
   return_map_error(-1);
 }
 
-int afd_poll(HANDLE afd_device_handle,
-             AFD_POLL_INFO* poll_info,
-             IO_STATUS_BLOCK* io_status_block) {
+int afd_poll(HANDLE afd_device_handle, AFD_POLL_INFO* poll_info, IO_STATUS_BLOCK* io_status_block) {
     /* Blocking operation is not supported. */
   assert(io_status_block != NULL);
 
@@ -399,12 +397,12 @@ int afd_poll(HANDLE afd_device_handle,
   if (status == STATUS_SUCCESS)
     return 0;
   if (status == STATUS_PENDING)
-      return_set_error(-1, ERROR_IO_PENDING);
+    return_set_error(-1, ERROR_IO_PENDING);
   return_set_error(-1, RtlNtStatusToDosError(status));
 }
 
 int afd_cancel_poll(HANDLE afd_device_handle, IO_STATUS_BLOCK* io_status_block) {
-    IO_STATUS_BLOCK cancel_iosb;
+  IO_STATUS_BLOCK cancel_iosb;
 
   /* If the poll operation has already completed or has been cancelled earlier,
    * there's nothing left for us to do. */
@@ -542,10 +540,10 @@ int epoll_global_init(void) {
 }
 
 static HANDLE epoll__create(void) {
-    HANDLE ephnd;
+  HANDLE ephnd;
 
-    if (init() < 0)
-    return NULL;
+  if (init() < 0)
+  return NULL;
 
   port_state_t* port_state = port_new(&ephnd);
   if (port_state == NULL)
@@ -894,10 +892,8 @@ WEPOLL_INTERNAL void poll_group_release(poll_group_t* poll_group);
 
 WEPOLL_INTERNAL void poll_group_delete(poll_group_t* poll_group);
 
-WEPOLL_INTERNAL poll_group_t* poll_group_from_queue_node(
-    queue_node_t* queue_node);
-WEPOLL_INTERNAL HANDLE
-    poll_group_get_afd_device_handle(poll_group_t* poll_group);
+WEPOLL_INTERNAL poll_group_t* poll_group_from_queue_node(queue_node_t* queue_node);
+WEPOLL_INTERNAL HANDLE poll_group_get_afd_device_handle(poll_group_t* poll_group);
 
 typedef struct queue_node {
   queue_node_t* prev;
@@ -947,8 +943,7 @@ static poll_group_t* poll_group__new(port_state_t* port_state) {
   queue_node_init(&poll_group->queue_node);
   poll_group->port_state = port_state;
 
-  if (afd_create_device_handle(iocp_handle, &poll_group->afd_device_handle) <
-      0) {
+  if (afd_create_device_handle(iocp_handle, &poll_group->afd_device_handle) < 0) {
     free(poll_group);
     return NULL;
   }
@@ -977,12 +972,10 @@ poll_group_t* poll_group_acquire(port_state_t* port_state) {
   queue_t* poll_group_queue = port_get_poll_group_queue(port_state);
   poll_group_t* poll_group =
       !queue_is_empty(poll_group_queue)
-          ? container_of(
-                queue_last(poll_group_queue), poll_group_t, queue_node)
+          ? container_of(queue_last(poll_group_queue), poll_group_t, queue_node)
           : NULL;
 
-  if (poll_group == NULL ||
-      poll_group->group_size >= POLL_GROUP__MAX_GROUP_SIZE)
+  if (poll_group == NULL || poll_group->group_size >= POLL_GROUP__MAX_GROUP_SIZE)
     poll_group = poll_group__new(port_state);
   if (poll_group == NULL)
     return NULL;
@@ -1165,8 +1158,7 @@ static inline int port__feed_events(port_state_t* port_state,
   int epoll_event_count = 0;
 
   for (DWORD i = 0; i < iocp_event_count; i++) {
-    IO_STATUS_BLOCK* io_status_block =
-        (IO_STATUS_BLOCK*) iocp_events[i].lpOverlapped;
+    IO_STATUS_BLOCK* io_status_block = (IO_STATUS_BLOCK*) iocp_events[i].lpOverlapped;
     struct epoll_event* ev = &epoll_events[epoll_event_count];
 
     epoll_event_count += sock_feed_event(port_state, io_status_block, ev);
@@ -1203,8 +1195,7 @@ static inline int port__poll(port_state_t* port_state,
   if (!r)
     return_map_error(-1);
 
-  return port__feed_events(
-      port_state, epoll_events, iocp_events, completion_count);
+  return port__feed_events(port_state, epoll_events, iocp_events, completion_count);
 }
 
 int port_wait(port_state_t* port_state, struct epoll_event* events, int maxevents, int timeout) {
@@ -1222,8 +1213,7 @@ int port_wait(port_state_t* port_state, struct epoll_event* events, int maxevent
    * memory for it on the heap. */
   if ((size_t) maxevents <= array_count(stack_iocp_events)) {
     iocp_events = stack_iocp_events;
-  } else if ((iocp_events =
-                  malloc((size_t) maxevents * sizeof *iocp_events)) == NULL) {
+  } else if ((iocp_events = malloc((size_t) maxevents * sizeof *iocp_events)) == NULL) {
     iocp_events = stack_iocp_events;
     maxevents = array_count(stack_iocp_events);
   }
@@ -1339,8 +1329,7 @@ int port_ctl(port_state_t* port_state, int op, SOCKET sock, struct epoll_event* 
 }
 
 int port_register_socket(port_state_t* port_state, sock_state_t* sock_state, SOCKET socket) {
-  if (tree_add(&port_state->sock_tree, sock_state_to_tree_node(sock_state),
-               socket) < 0)
+  if (tree_add(&port_state->sock_tree, sock_state_to_tree_node(sock_state), socket) < 0)
     return_set_error(-1, ERROR_ALREADY_EXISTS);
   return 0;
 }
@@ -1372,8 +1361,7 @@ void port_cancel_socket_update(port_state_t* port_state, sock_state_t* sock_stat
 void port_add_deleted_socket(port_state_t* port_state, sock_state_t* sock_state) {
   if (queue_is_enqueued(sock_state_to_queue_node(sock_state)))
     return;
-  queue_append(&port_state->sock_deleted_queue,
-               sock_state_to_queue_node(sock_state));
+  queue_append(&port_state->sock_deleted_queue, sock_state_to_queue_node(sock_state));
 }
 
 void port_remove_deleted_socket(port_state_t* port_state, sock_state_t* sock_state) {
@@ -1662,7 +1650,7 @@ done:
 
 sock_state_t* sock_new(port_state_t* port_state, SOCKET socket) {
   if (socket == 0 || socket == INVALID_SOCKET)
-  return_set_error(NULL, ERROR_INVALID_HANDLE);
+    return_set_error(NULL, ERROR_INVALID_HANDLE);
 
   const SOCKET base_socket = ws_get_base_socket(socket);
   if (base_socket == INVALID_SOCKET)
@@ -1901,8 +1889,7 @@ int sock_update(port_state_t* port_state, sock_state_t* sock_state) {
     sock_state->poll_info.Timeout.QuadPart = INT64_MAX;
     sock_state->poll_info.Handles[0].Handle = (HANDLE) sock_state->base_socket;
     sock_state->poll_info.Handles[0].Status = 0;
-    sock_state->poll_info.Handles[0].Events =
-        sock__epoll_events_to_afd_events(sock_state->user_events);
+    sock_state->poll_info.Handles[0].Events = sock__epoll_events_to_afd_events(sock_state->user_events);
 
     if (afd_poll(poll_group_get_afd_device_handle(sock_state->poll_group),
                  &sock_state->poll_info,
@@ -1964,8 +1951,7 @@ int sock_feed_event(port_state_t* port_state, IO_STATUS_BLOCK* io_status_block, 
 
   } else {
       /* Events related to our socket were reported. */
-      epoll_events =
-          sock__afd_events_to_epoll_events(poll_info->Handles[0].Events);
+      epoll_events = sock__afd_events_to_epoll_events(poll_info->Handles[0].Events);
   }
 
   /* Requeue the socket so a new poll request will be submitted. */
