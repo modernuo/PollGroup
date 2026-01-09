@@ -346,16 +346,16 @@ int afd_create_device_handle(HANDLE iocp_handle,
    * get a handle that lets us talk to the AFD driver, but that doesn't have an
    * associated endpoint (so it's not a socket). */
   const NTSTATUS status = NtCreateFile(&afd_device_handle,
-                                 SYNCHRONIZE,
-                                 &afd__device_attributes,
-                                 &iosb,
-                                 NULL,
-                                 0,
-                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                 FILE_OPEN,
-                                 0,
-                                 NULL,
-                                 0);
+    SYNCHRONIZE,
+    &afd__device_attributes,
+    &iosb,
+    NULL,
+    0,
+    FILE_SHARE_READ | FILE_SHARE_WRITE,
+    FILE_OPEN,
+    0,
+    NULL,
+    0);
   if (status != STATUS_SUCCESS)
     return_set_error(-1, RtlNtStatusToDosError(status));
 
